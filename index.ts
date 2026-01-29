@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -7,8 +7,10 @@ interface Task {
   id: number;
   name: string;
   completed: boolean;
+  hidden: boolean;
   createdAt: string;
   completedAt?: string;
+  hiddenAt?: string;
 }
 
 interface TaskData {
@@ -17,67 +19,87 @@ interface TaskData {
 }
 
 // ============ Config ============
-const DATA_FILE = join(homedir(), ".task-manager-data.json");
+const DATA_FILE = join(homedir(), "tasks-cli-storage.json");
 
 // ============ Data Operations ============
-async function loadTasks(): Promise<TaskData> {
+function loadTasks(): TaskData {
   try {
     if (existsSync(DATA_FILE)) {
-      const file = Bun.file(DATA_FILE);
-      return await file.json();
+      const content = readFileSync(DATA_FILE, "utf-8");
+      return JSON.parse(content);
     }
   } catch (error) {
-    console.error("Error loading tasks, starting fresh.");
+    console.error("  ⚠️  Error loading tasks, starting fresh.");
   }
   return { tasks: [], nextId: 1 };
 }
 
-async function saveTasks(data: TaskData): Promise<void> {
-  await Bun.write(DATA_FILE, JSON.stringify(data, null, 2));
+function saveTasks(data: TaskData): void {
+  try {
+    writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (error) {
+    console.error("  ❌ Error saving tasks:", error);
+  }
+}
+
+// ============ Helper Functions ============
+function getPendingTasks(data: TaskData): Task[] {
+  return data.tasks.filter((task) => !task.completed && !task.hidden);
+}
+
+function getArchivedTasks(data: TaskData): Task[] {
+  return data.tasks.filter((task) => task.completed && !task.hidden);
 }
 
 // ============ Commands ============
-async function addTask(taskName: string): Promise<void> {
-  const data = await loadTasks();
-  
+function addTask(taskName: string): void {
+  const data = loadTasks();
+
   const newTask: Task = {
     id: data.nextId,
     name: taskName,
     completed: false,
+    hidden: false,
     createdAt: new Date().toISOString(),
   };
-  
+
   data.tasks.push(newTask);
   data.nextId++;
-  await saveTasks(data);
-  
-  console.log(`\n  ✅ Task added: "${taskName}"\n`);
+  saveTasks(data);
+
+  const pendingTasks = getPendingTasks(data);
+  const serialNumber = pendingTasks.length;
+
+  console.log(`\n  ✅ Task added: "${taskName}"`);
+  console.log(`  📍 Serial number: ${serialNumber}\n`);
 }
 
-async function displayTasks(): Promise<void> {
-  const data = await loadTasks();
-  const pendingTasks = data.tasks.filter((task) => !task.completed);
+function displayTasks(): void {
+  const data = loadTasks();
+  const pendingTasks = getPendingTasks(data);
 
   if (pendingTasks.length === 0) {
     console.log("\n  📋 No pending tasks! You're all caught up.\n");
     return;
   }
 
-  console.log("\n  ╔══════════════════════════════════════╗");
-  console.log("  ║          📋 PENDING TASKS            ║");
-  console.log("  ╠══════════════════════════════════════╣");
-  
+  console.log("\n  ───────────────────────────────────────");
+  console.log("              📋 PENDING TASKS           ");
+  console.log("  ───────────────────────────────────────");
+
   pendingTasks.forEach((task, index) => {
-    const num = String(index + 1).padStart(2, " ");
-    console.log(`  ║  ${num}. ${task.name.padEnd(33).slice(0, 33)} ║`);
+    const num = index + 1;
+    console.log(`\n   ${num}. ${task.name}`);
   });
-  
-  console.log("  ╚══════════════════════════════════════╝\n");
+
+  console.log("\n  ───────────────────────────────────────");
+  console.log(`  Total: ${pendingTasks.length} task(s)`);
+  console.log("  ───────────────────────────────────────\n");
 }
 
-async function markDone(serialNumber: number): Promise<void> {
-  const data = await loadTasks();
-  const pendingTasks = data.tasks.filter((task) => !task.completed);
+function markDone(serialNumber: number): void {
+  const data = loadTasks();
+  const pendingTasks = getPendingTasks(data);
 
   if (serialNumber < 1 || serialNumber > pendingTasks.length) {
     console.log("\n  ❌ Invalid task number!\n");
@@ -90,160 +112,231 @@ async function markDone(serialNumber: number): Promise<void> {
   data.tasks[taskIndex].completed = true;
   data.tasks[taskIndex].completedAt = new Date().toISOString();
 
-  await saveTasks(data);
+  saveTasks(data);
   console.log(`\n  ✅ Completed: "${taskToComplete.name}"\n`);
 }
 
-async function showArchive(): Promise<void> {
-  const data = await loadTasks();
-  const completedTasks = data.tasks.filter((task) => task.completed);
+function deleteTask(input: string): void {
+  const data = loadTasks();
+  const arg = input.toLowerCase().trim();
+
+  if (arg === "all") {
+    const pendingTasks = getPendingTasks(data);
+
+    if (pendingTasks.length === 0) {
+      console.log("\n  📋 No pending tasks to delete.\n");
+      return;
+    }
+
+    let count = 0;
+    pendingTasks.forEach((task) => {
+      const taskIndex = data.tasks.findIndex((t) => t.id === task.id);
+      data.tasks[taskIndex].hidden = true;
+      data.tasks[taskIndex].hiddenAt = new Date().toISOString();
+      count++;
+    });
+
+    saveTasks(data);
+    console.log(`\n  🗑️  Deleted ${count} pending task(s).\n`);
+    return;
+  }
+
+  if (arg === "archive") {
+    const archivedTasks = getArchivedTasks(data);
+
+    if (archivedTasks.length === 0) {
+      console.log("\n  📦 No archived tasks to delete.\n");
+      return;
+    }
+
+    let count = 0;
+    archivedTasks.forEach((task) => {
+      const taskIndex = data.tasks.findIndex((t) => t.id === task.id);
+      data.tasks[taskIndex].hidden = true;
+      data.tasks[taskIndex].hiddenAt = new Date().toISOString();
+      count++;
+    });
+
+    saveTasks(data);
+    console.log(`\n  🗑️  Deleted ${count} archived task(s).\n`);
+    return;
+  }
+
+  const serialNumber = parseInt(arg, 10);
+
+  if (isNaN(serialNumber)) {
+    console.log("\n  ❌ Invalid input!");
+    console.log("  Usage: delete <number> | delete all | delete archive\n");
+    return;
+  }
+
+  const pendingTasks = getPendingTasks(data);
+
+  if (serialNumber < 1 || serialNumber > pendingTasks.length) {
+    console.log("\n  ❌ Invalid task number!\n");
+    return;
+  }
+
+  const taskToDelete = pendingTasks[serialNumber - 1];
+  const taskIndex = data.tasks.findIndex((t) => t.id === taskToDelete.id);
+
+  data.tasks[taskIndex].hidden = true;
+  data.tasks[taskIndex].hiddenAt = new Date().toISOString();
+
+  saveTasks(data);
+  console.log(`\n  🗑️  Deleted: "${taskToDelete.name}"\n`);
+}
+
+function showArchive(): void {
+  const data = loadTasks();
+  const completedTasks = getArchivedTasks(data);
 
   if (completedTasks.length === 0) {
     console.log("\n  📦 No completed tasks in archive.\n");
     return;
   }
 
-  console.log("\n  ╔══════════════════════════════════════════════════╗");
-  console.log("  ║              📦 COMPLETED TASKS                  ║");
-  console.log("  ╠══════════════════════════════════════════════════╣");
+  console.log("\n  ───────────────────────────────────────");
+  console.log("            📦 COMPLETED TASKS           ");
+  console.log("  ───────────────────────────────────────");
 
   completedTasks.forEach((task, index) => {
     const completedDate = new Date(task.completedAt!);
     const dateStr = completedDate.toLocaleDateString();
     const timeStr = completedDate.toLocaleTimeString();
-    
-    console.log(`  ║  ${index + 1}. ${task.name.padEnd(43).slice(0, 43)} ║`);
-    console.log(`  ║     └─ Completed: ${dateStr} at ${timeStr.padEnd(18)} ║`);
+
+    console.log(`\n   ${index + 1}. ${task.name}`);
+    console.log(`      └─ Completed: ${dateStr} at ${timeStr}`);
   });
 
-  console.log("  ╚══════════════════════════════════════════════════╝\n");
+  console.log("\n  ───────────────────────────────────────");
+  console.log(`  Total: ${completedTasks.length} completed task(s)`);
+  console.log("  ───────────────────────────────────────\n");
 }
 
 function showHelp(): void {
   console.log(`
-  ╔═══════════════════════════════════════════════════╗
-  ║                TASKS-CLI                          ║
-  ╠═══════════════════════════════════════════════════╣
-  ║                                                   ║
-  ║  COMMANDS:                                        ║
-  ║                                                   ║
-  ║  add-- <task>      Add a new task                 ║
-  ║  display           Show all pending tasks         ║
-  ║  done-- <number>   Mark task as completed         ║
-  ║  --archive         Show completed tasks           ║
-  ║  --help            Show this help message         ║
-  ║  --clear           Clear all tasks                ║
-  ║  exit              Exit the program               ║
-  ║                                                   ║
-  ╚═══════════════════════════════════════════════════╝
+  ───────────────────────────────────────────────────
+                     TASKS-CLI                       
+  ───────────────────────────────────────────────────
+
+  COMMANDS:
+
+    add <task>        Add a new task
+    display           Show all pending tasks
+    done <number>     Mark task as completed
+    delete <number>   Delete a specific task
+    delete all        Delete all pending tasks
+    delete archive    Delete all archived tasks
+    archive           Show completed tasks
+    location          Show data file location
+    help              Show this help message
+    exit              Exit the program
+
+  ───────────────────────────────────────────────────
   `);
 }
 
-async function clearAllTasks(): Promise<void> {
-  await saveTasks({ tasks: [], nextId: 1 });
-  console.log("\n  🗑️  All tasks cleared!\n");
+function showLocation(): void {
+  console.log(`\n  📁 Data file location:`);
+  console.log(`     ${DATA_FILE}`);
+  console.log(`\n  📊 File exists: ${existsSync(DATA_FILE) ? "Yes ✅" : "No (will be created on first save)"}\n`);
 }
 
 // ============ Process Command ============
-async function processCommand(input: string): Promise<boolean> {
-  const parts = input.trim().split(" ");
-  const command = parts[0].toLowerCase();
-
-  if (!command) {
-    return true; // Continue loop on empty input
+function processCommand(input: string): boolean {
+  const trimmed = input.trim();
+  
+  if (!trimmed) {
+    return true;
   }
 
-  // Exit command
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0].toLowerCase();
+  const args = parts.slice(1).join(" ");
+
   if (command === "exit" || command === "quit" || command === "q") {
     console.log("\n  👋 Goodbye!\n");
-    return false; // Stop the loop
+    return false;
   }
 
-  // Handle add-- command
-  if (command.startsWith("add--")) {
-    let taskName = command.slice(5).trim();
-    
-    if (!taskName && parts.length > 1) {
-      taskName = parts.slice(1).join(" ");
-    }
-    
-    if (!taskName) {
-      console.log("\n  ❌ Please provide a task name!");
-      console.log("  Usage: add-- <task name>\n");
-      return true;
-    }
-    
-    await addTask(taskName);
-    return true;
-  }
-
-  // Handle done-- command
-  if (command.startsWith("done--")) {
-    let serialStr = command.slice(6).trim();
-    
-    if (!serialStr && parts.length > 1) {
-      serialStr = parts[1];
-    }
-    
-    const serialNumber = parseInt(serialStr, 10);
-    
-    if (isNaN(serialNumber)) {
-      console.log("\n  ❌ Please provide a valid task number!");
-      console.log("  Usage: done-- <number>\n");
-      return true;
-    }
-    
-    await markDone(serialNumber);
-    return true;
-  }
-
-  // Handle other commands
   switch (command) {
+    case "add":
+      if (!args) {
+        console.log("\n  ❌ Please provide a task name!");
+        console.log("  Usage: add <task name>\n");
+      } else {
+        addTask(args);
+      }
+      break;
+
+    case "done":
+      const doneNum = parseInt(args, 10);
+      if (isNaN(doneNum)) {
+        console.log("\n  ❌ Please provide a valid task number!");
+        console.log("  Usage: done <number>\n");
+      } else {
+        markDone(doneNum);
+      }
+      break;
+
+    case "delete":
+      if (!args) {
+        console.log("\n  ❌ Please provide what to delete!");
+        console.log("  Usage: delete <number> | delete all | delete archive\n");
+      } else {
+        deleteTask(args);
+      }
+      break;
+
     case "display":
-      await displayTasks();
+    case "list":
+    case "show":
+      displayTasks();
       break;
-    case "--archive":
+
     case "archive":
-      await showArchive();
+      showArchive();
       break;
-    case "--help":
+
     case "help":
       showHelp();
       break;
-    case "--clear":
-    case "clear":
-      await clearAllTasks();
+
+    case "location":
+      showLocation();
       break;
+
     default:
       console.log(`\n  ❌ Unknown command: "${command}"`);
       console.log("  Type 'help' to see available commands.\n");
   }
 
-  return true; // Continue loop
+  return true;
 }
 
 // ============ Interactive Mode ============
 async function interactiveMode(): Promise<void> {
   showHelp();
-  
+
   const prompt = "  ➜ ";
   process.stdout.write(prompt);
 
   for await (const line of console) {
-    const shouldContinue = await processCommand(line);
-    
+    const shouldContinue = processCommand(line);
+
     if (!shouldContinue) {
       break;
     }
-    
+
     process.stdout.write(prompt);
   }
 }
 
 // ============ Single Command Mode ============
-async function singleCommandMode(args: string[]): Promise<void> {
+function singleCommandMode(args: string[]): void {
   const input = args.join(" ");
-  await processCommand(input);
+  processCommand(input);
 }
 
 // ============ Main ============
@@ -251,11 +344,9 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    // Interactive mode when no arguments (double-click or just running the exe)
     await interactiveMode();
   } else {
-    // Single command mode when arguments provided
-    await singleCommandMode(args);
+    singleCommandMode(args);
   }
 }
 
