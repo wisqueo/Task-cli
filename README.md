@@ -104,8 +104,3 @@ Contributions are welcome! Feel free to open an issue or submit a pull request.
 Distributed under the MIT License. See `LICENSE` for more information.
 ```
 
-### 💡 Tips for Publishing
-
-1.  **Create a Release:** Since you mentioned providing an `.exe`, go to your GitHub repository, click "Releases" on the right sidebar, click "Draft a new release", and upload your `.exe` file there. The README above links to that page.
-2.  **Screenshots:** If possible, take a screenshot of your terminal running the tool (showing the `display` command with some tasks) and put it in the README. It makes the project look much more attractive.
-3.  **Filename:** Ensure your main file is named `index.ts` (as referenced in the commands above) or update the `bun build` command in the README to match your actual filename.
