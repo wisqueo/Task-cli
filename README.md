@@ -240,7 +240,7 @@ Contributions are welcome! Feel free to:
 
 
 5. Open a Pull Request
-
+```
 
 
 📬 Contact
@@ -251,6 +251,4 @@ Project Link: https://github.com/wisqueo/tasks-cli
 
 
 ---
-
 <p align="center">Made with ❤️ and Bun</p>
-```
