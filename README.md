@@ -1,6 +1,5 @@
 
 
-```markdown
 # tasks-cli
 
 A minimal, elegant command-line task manager built with [Bun](https://bun.sh).
